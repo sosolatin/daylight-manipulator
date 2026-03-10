@@ -22,14 +22,13 @@ function buildFilename(timeOfDay) {
 
 export default function App() {
   const [unlocked, setUnlocked] = useState(() => !!sessionStorage.getItem('toolPassword'))
-
-  if (!unlocked) return <PasswordGate onUnlock={() => setUnlocked(true)} />
-
   const { feed, addPreloader, replacePreloader, removePreloader, removeFromFeed, clearFeed } = useFeed()
   const [image, setImage] = useState(null)
   const [selectedTime, setSelectedTime] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  if (!unlocked) return <PasswordGate onUnlock={() => setUnlocked(true)} />
 
   const imageCount = feed.filter(item => item.type === 'image').length
   const canConvert = !!image && !!selectedTime && !loading
