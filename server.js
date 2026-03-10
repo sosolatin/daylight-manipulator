@@ -266,6 +266,14 @@ app.get('/admin', (req, res) => {
 </html>`)
 })
 
+// ── Serve built frontend (production) ────────────────────────────────────────
+import { existsSync } from 'fs'
+const DIST_DIR = join(__dirname, 'dist')
+if (existsSync(DIST_DIR)) {
+  app.use(express.static(DIST_DIR))
+  app.get('*', (req, res) => res.sendFile(join(DIST_DIR, 'index.html')))
+}
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.SERVER_PORT || 3002
 app.listen(PORT, () => console.log(`API server running on http://localhost:${PORT}`))
