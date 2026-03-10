@@ -1,41 +1,44 @@
 import 'dotenv/config'
 import express from 'express'
 import rateLimit from 'express-rate-limit'
-import Database from 'better-sqlite3'
-import { writeFileSync, mkdirSync } from 'fs'
+import { v2 as cloudinary } from 'cloudinary'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import { existsSync } from 'fs'
 import { SYSTEM_PROMPT } from './src/prompts/systemPrompt.js'
 import { buildImagePrompt } from './src/prompts/buildUserPrompt.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const STORAGE_DIR = join(__dirname, 'storage', 'images')
-mkdirSync(STORAGE_DIR, { recursive: true })
 
-// ── Database setup ────────────────────────────────────────────────────────────
-const db = new Database(join(__dirname, 'storage', 'generations.db'))
-db.exec(`
-  CREATE TABLE IF NOT EXISTS generations (
-    id         TEXT PRIMARY KEY,
-    timestamp  INTEGER NOT NULL,
-    ip         TEXT,
-    time_of_day TEXT NOT NULL,
-    filename   TEXT NOT NULL
+// ── Cloudinary ────────────────────────────────────────────────────────────────
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+})
+
+async function uploadToCloudinary(base64, timeOfDay, ip) {
+  const result = await cloudinary.uploader.upload(
+    `data:image/png;base64,${base64}`,
+    {
+      folder: 'saffire-daylight',
+      context: { time_of_day: timeOfDay, ip: ip || '' },
+    }
   )
-`)
-
-function saveGeneration({ id, timestamp, ip, timeOfDay, filename, imageBase64 }) {
-  writeFileSync(join(STORAGE_DIR, filename), Buffer.from(imageBase64, 'base64'))
-  db.prepare(
-    'INSERT INTO generations (id, timestamp, ip, time_of_day, filename) VALUES (?, ?, ?, ?, ?)'
-  ).run(id, timestamp, ip, timeOfDay, filename)
+  return result
 }
 
-function getAllGenerations() {
-  return db.prepare('SELECT * FROM generations ORDER BY timestamp DESC').all()
+async function getCloudinaryImages() {
+  const result = await cloudinary.api.resources({
+    type: 'upload',
+    prefix: 'saffire-daylight/',
+    max_results: 200,
+    context: true,
+  })
+  return result.resources.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
 }
 
-// ── Express setup ─────────────────────────────────────────────────────────────
+// ── Express ───────────────────────────────────────────────────────────────────
 const app = express()
 app.use(express.json({ limit: '20mb' }))
 
@@ -181,16 +184,11 @@ The output must match the source image's exact aspect ratio, framing, and compos
       })
     }
 
-    // ── Save to disk + database ───────────────────────────────────────────────
-    const id = crypto.randomUUID()
-    const now = Date.now()
-    const pad = n => String(n).padStart(2, '0')
-    const d = new Date(now)
-    const datestamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
-    const filename = `saffire-${targetTime}-${datestamp}-${id.slice(0, 8)}.png`
+    // ── Upload to Cloudinary ──────────────────────────────────────────────────
     const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.ip
-
-    saveGeneration({ id, timestamp: now, ip, timeOfDay: targetTime, filename, imageBase64: imagePart.inlineData.data })
+    uploadToCloudinary(imagePart.inlineData.data, targetTime, ip).catch(err =>
+      console.error('Cloudinary upload failed:', err.message)
+    )
 
     res.json({ imageBase64: imagePart.inlineData.data })
   } catch (err) {
@@ -199,15 +197,7 @@ The output must match the source image's exact aspect ratio, framing, and compos
 })
 
 // ── Admin gallery ─────────────────────────────────────────────────────────────
-app.use('/storage/images', (req, res, next) => {
-  const provided = req.query.pw
-  if (TOOL_PASSWORD && provided !== TOOL_PASSWORD) {
-    return res.status(401).send('Unauthorised')
-  }
-  next()
-}, express.static(STORAGE_DIR))
-
-app.get('/admin', (req, res) => {
+app.get('/admin', async (req, res) => {
   const provided = req.query.pw
   if (TOOL_PASSWORD && provided !== TOOL_PASSWORD) {
     return res.status(401).send(`
@@ -224,22 +214,28 @@ app.get('/admin', (req, res) => {
     `)
   }
 
-  const rows = getAllGenerations()
   const timeLabels = { dawn: 'Pre-dawn / Dawn', dusk: 'Dusk', night: 'Night', overcast: 'Overcast Day' }
 
+  let rows = []
+  try {
+    rows = await getCloudinaryImages()
+  } catch (err) {
+    console.error('Cloudinary fetch failed:', err.message)
+  }
+
   const cards = rows.map(r => {
-    const date = new Date(r.timestamp).toLocaleString('en-AU', {
+    const tod = r.context?.custom?.time_of_day || ''
+    const ip = r.context?.custom?.ip || '—'
+    const date = new Date(r.created_at).toLocaleString('en-AU', {
       day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
     })
     return `
       <div style="background:#1e1f21;border:1px solid #2f3033;border-radius:8px;overflow:hidden">
-        <img src="/storage/images/${r.filename}?pw=${provided || ''}"
-          style="width:100%;display:block;cursor:zoom-in"
-          onclick="window.open(this.src,'_blank')" />
+        <img src="${r.secure_url}" style="width:100%;display:block;cursor:zoom-in" onclick="window.open(this.src,'_blank')" />
         <div style="padding:10px 12px">
-          <div style="font-size:13px;color:#e2e2e5;font-weight:500">${timeLabels[r.time_of_day] || r.time_of_day}</div>
+          <div style="font-size:13px;color:#e2e2e5;font-weight:500">${timeLabels[tod] || tod || '—'}</div>
           <div style="font-size:11px;color:#55555a;margin-top:3px">${date}</div>
-          <div style="font-size:11px;color:#3a3a3f;margin-top:2px">${r.ip || '—'}</div>
+          <div style="font-size:11px;color:#3a3a3f;margin-top:2px">${ip}</div>
         </div>
       </div>`
   }).join('')
@@ -267,11 +263,10 @@ app.get('/admin', (req, res) => {
 })
 
 // ── Serve built frontend (production) ────────────────────────────────────────
-import { existsSync } from 'fs'
 const DIST_DIR = join(__dirname, 'dist')
 if (existsSync(DIST_DIR)) {
   app.use(express.static(DIST_DIR))
-  app.get('*', (req, res) => res.sendFile(join(DIST_DIR, 'index.html')))
+  app.get('/{*path}', (req, res) => res.sendFile(join(DIST_DIR, 'index.html')))
 }
 
 // ── Start ─────────────────────────────────────────────────────────────────────
