@@ -44,13 +44,13 @@ Conclude the brief with: "Every element in the scene inventory above must remain
 
 app.get('/api/ping', (req, res) => res.json({ ok: true }))
 
-// 20 conversions per IP per 24 hours
+// 10 conversions per IP per 24 hours
 const convertLimiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000,
-  max: 20,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Daily limit reached (20 conversions per 24 hours). Please try again tomorrow.' },
+  message: { error: 'Daily limit reached (10 conversions per 24 hours). Please try again tomorrow.' },
 })
 
 app.post('/api/convert', convertLimiter, async (req, res) => {
