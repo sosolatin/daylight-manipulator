@@ -7,6 +7,17 @@ const app = express()
 app.use(express.json({ limit: '20mb' }))
 
 const API_KEY = process.env.GEMINI_API_KEY
+const TOOL_PASSWORD = process.env.TOOL_PASSWORD
+
+// Password check middleware for all /api routes
+app.use('/api', (req, res, next) => {
+  if (!TOOL_PASSWORD) return next()
+  const provided = req.headers['x-tool-password']
+  if (provided !== TOOL_PASSWORD) {
+    return res.status(401).json({ error: 'Incorrect password.' })
+  }
+  next()
+})
 
 // Step 1 prompt: ask the vision model to produce a scene inventory + transformation brief
 function buildBriefPrompt(targetTime) {
@@ -29,6 +40,8 @@ LIGHTING TRANSFORMATION BRIEF:
 
 Conclude the brief with: "Every element in the scene inventory above must remain completely unchanged. Only the lighting, shadows, sky, and lamp glow change."`
 }
+
+app.get('/api/ping', (req, res) => res.json({ ok: true }))
 
 app.post('/api/convert', async (req, res) => {
   if (!API_KEY) {

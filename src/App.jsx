@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import PasswordGate from './components/PasswordGate.jsx'
 import LeftColumn from './components/LeftColumn.jsx'
 import RightColumn from './components/RightColumn.jsx'
 import UploadZone from './components/UploadZone.jsx'
@@ -20,6 +21,10 @@ function buildFilename(timeOfDay) {
 }
 
 export default function App() {
+  const [unlocked, setUnlocked] = useState(() => !!sessionStorage.getItem('toolPassword'))
+
+  if (!unlocked) return <PasswordGate onUnlock={() => setUnlocked(true)} />
+
   const { feed, addPreloader, replacePreloader, removePreloader, removeFromFeed, clearFeed } = useFeed()
   const [image, setImage] = useState(null)
   const [selectedTime, setSelectedTime] = useState(null)
